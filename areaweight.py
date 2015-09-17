@@ -6,6 +6,7 @@ Terry Brown, Terry_N_Brown@yahoo.com, Thu Sep 17 13:49:05 2015
 """
 
 import argparse
+import csv
 import logging; logging.basicConfig(level=logging.INFO, format='%(message)s')
 import os
 import sys
@@ -23,9 +24,53 @@ def area_weight(opt, from_layer, to_layer):
     :param OGR Layer from_layer: layer with attributes
     :param OGR Layer to_layer: layer needing attributes
     """
+    
+    from_attr = {}
 
     for to_feature in to_layer:
-        print to_feature.GetFID()
+        to_geom = to_feature.GetGeometryRef().Clone()
+        to_id = to_feature.GetField(opt.to_id)
+        if opt.buffer:
+            to_geom.Buffer(opt.buffer)
+        if opt.transform:
+            to_geom.Transform(opt.transform)
+        from_layer.SetSpatialFilter(to_geom)
+        from_layer.ResetReading()
+        total_area = 0
+        intersecting = set()
+        for n, from_feature in enumerate(from_layer):
+            from_geom = from_feature.GetGeometryRef()
+            intersection = to_geom.Intersection(from_geom)
+            int_area = intersection and intersection.GetArea()
+            if not int_area:
+                continue
+            from_id = from_feature.GetField(opt.from_id)
+            intersecting.add(from_id)
+            if opt.total_area:
+                if from_id not in from_attr:
+                    from_attr[from_id] = from_geom.GetArea()
+            else:
+                from_attr[from_id] = int_area
+            total_area += from_attr[from_id]
+            for attr in opt.attributes:
+                if (from_id, attr) not in from_attr:
+                    from_attr[(from_id, attr)] = float(from_feature.GetField(attr))
+        total_attr = {attr:0 for attr in opt.attributes}
+        for from_id in intersecting:
+            from_area = from_attr[from_id]
+            prop = from_attr[from_id] / total_area
+            contrib = [to_id, from_id, total_area, from_area, prop]
+            for attr in opt.attributes:
+                share = prop * from_attr[(from_id, attr)]
+                total_attr[attr] += share
+                contrib.append(from_attr[(from_id, attr)])
+                contrib.append(share)
+            if opt.contrib:
+                opt.contrib.writerow(contrib)
+        out = [to_id, len(intersecting), total_area]
+        for attr in opt.attributes:
+            out.append(total_attr[attr])
+        opt.output.writerow(out)
 def make_parser():
      
      parser = argparse.ArgumentParser(
@@ -49,6 +94,12 @@ def make_parser():
      )
      parser.add_argument("--attributes", required=True, nargs='+',
          help="Attribute field names, in from-layer or from-table, to area weight"
+     )
+     parser.add_argument("--buffer", type=float,
+         help="Distance to buffer to-layer polys before intersection"
+     )
+     parser.add_argument("--total-area", action='store_true', default=False,
+         help="Use total area of from-layer features, not intersecting area"
      )
      parser.add_argument("--from-table",
          help="Path to table data source if attributes are not in from-layer"
@@ -89,15 +140,23 @@ def main():
     if opt.output:
         if os.path.exists(opt.output):
             raise AreaWeightException("Output file '%s' already exists" % opt.output)
-        opt.output = open(opt.output, 'w')
+        opt.output = csv.writer(open(opt.output, 'w'))
     else:
-        opt.output = sys.stdout
+        opt.output = csv.writer(sys.stdout)
+    heads = [opt.to_id, 'aw_n', 'aw_a']
+    for attrib in opt.attributes:
+        heads.extend([attrib])
+    opt.output.writerow(heads)
         
     # optionally open CSV contribution info. file
     if opt.contrib:
         if os.path.exists(opt.contrib):
             raise AreaWeightException("Contrib file '%s' already exists" % opt.contrib)
-        opt.contrib = open(opt.contrib, 'w')
+        opt.contrib = csv.writer(open(opt.contrib, 'w'))
+        heads = [opt.to_id, opt.from_id, 'total_area', 'from_area', 'prop']
+        for attrib in opt.attributes:
+            heads.extend([attrib, 'aw_'+attrib])
+        opt.contrib.writerow(heads)
 
     # open geometries
     from_ds = ogr.Open(opt.from_layer)
@@ -112,6 +171,5 @@ def main():
         logging.info("Re-projecting to-layer to from-layer")
 
     area_weight(opt, from_layer, to_layer)
-    
 if __name__ == '__main__':
     main()

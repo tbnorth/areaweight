@@ -4,6 +4,8 @@ python areaweight.py \
   --from-id uniq_id3 \
   --to-layer ~/t/Proj/GLEI/shapefiles/seg_shed.shp \
   --to-id seg_num \
-  --attributes edmrbsnm pcag sumrel \
-  --output testout.csv \
+  --attributes catch_area carea_km area_km3 \
   --contrib testcon.csv
+
+#  --buffer 100
+#  --output testout.csv \
