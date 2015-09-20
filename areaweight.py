@@ -27,12 +27,14 @@ def area_weight(opt, from_layer, to_layer):
     
     from_attr = {}
 
-    for to_feature in to_layer:
-        to_geom = to_feature.GetGeometryRef().Clone()
+    for out_n, to_feature in enumerate(to_layer):
         to_id = to_feature.GetField(opt.to_id)
+        to_geom = to_feature.GetGeometryRef().Clone()
+        if opt.transform and opt.transform_before_buffer:
+            to_geom.Transform(opt.transform)
         if opt.buffer:
-            to_geom.Buffer(opt.buffer)
-        if opt.transform:
+            to_geom = to_geom.Buffer(opt.buffer)
+        if opt.transform and not opt.transform_before_buffer:
             to_geom.Transform(opt.transform)
         from_layer.SetSpatialFilter(to_geom)
         from_layer.ResetReading()
@@ -41,8 +43,9 @@ def area_weight(opt, from_layer, to_layer):
         for n, from_feature in enumerate(from_layer):
             from_geom = from_feature.GetGeometryRef()
             intersection = to_geom.Intersection(from_geom)
-            int_area = intersection and intersection.GetArea()
-            if not int_area:
+            intersect_area = intersection and intersection.GetArea()
+            # SetSpatialFilter() can return non-intersecting polys (BBox hits)
+            if not intersect_area:
                 continue
             from_id = from_feature.GetField(opt.from_id)
             intersecting.add(from_id)
@@ -50,11 +53,15 @@ def area_weight(opt, from_layer, to_layer):
                 if from_id not in from_attr:
                     from_attr[from_id] = from_geom.GetArea()
             else:
-                from_attr[from_id] = int_area
+                # always update when using actual intersect area
+                from_attr[from_id] = intersect_area
             total_area += from_attr[from_id]
             for attr in opt.attributes:
                 if (from_id, attr) not in from_attr:
-                    from_attr[(from_id, attr)] = float(from_feature.GetField(attr))
+                    if opt.from_table:
+                        from_attr[(from_id, attr)] = float(opt.from_table[from_id][opt.c2f[attr]])
+                    else:
+                        from_attr[(from_id, attr)] = float(from_feature.GetField(attr))
         total_attr = {attr:0 for attr in opt.attributes}
         for from_id in intersecting:
             from_area = from_attr[from_id]
@@ -71,6 +78,8 @@ def area_weight(opt, from_layer, to_layer):
         for attr in opt.attributes:
             out.append(total_attr[attr])
         opt.output.writerow(out)
+        if opt.progress:
+            print("%d: %s %s" % (out_n+1, opt.to_id, to_id))
 def make_parser():
      
      parser = argparse.ArgumentParser(
@@ -98,21 +107,24 @@ def make_parser():
      parser.add_argument("--buffer", type=float,
          help="Distance to buffer to-layer polys before intersection"
      )
+     parser.add_argument("--transform-before-buffer", action='store_true', default=False,
+         help="Transform to-layer to from-layer *before* buffering, not after"
+     )
      parser.add_argument("--total-area", action='store_true', default=False,
          help="Use total area of from-layer features, not intersecting area"
      )
      parser.add_argument("--from-table",
          help="Path to table data source if attributes are not in from-layer"
      )
-     parser.add_argument("--from-table-d",
+     parser.add_argument("--from-table-id",
          help="Name of ID field in from-table, values should match from-id values"
      )
      parser.add_argument("--output",
-         help="Path to output file (csv), must not exist already."
+         help="Path to output file (csv), must not exist already"
      )
      parser.add_argument("--contrib",
          help="Path to optional file (csv), to receive contribution information, "
-         "must not exist already."
+         "must not exist already"
      )
 
      return parser
@@ -130,7 +142,7 @@ def make_transform(from_, to):
     from_ = from_.GetSpatialRef()
     if from_ == to:
         return None
-    ans = osr.CoordinateTransformation(from_, to)
+    ans = osr.CoordinateTransformation(to, from_)
     return ans
 def main():
 
@@ -141,8 +153,10 @@ def main():
         if os.path.exists(opt.output):
             raise AreaWeightException("Output file '%s' already exists" % opt.output)
         opt.output = csv.writer(open(opt.output, 'w'))
+        opt.progress = True
     else:
         opt.output = csv.writer(sys.stdout)
+        opt.progress = False
     heads = [opt.to_id, 'aw_n', 'aw_a']
     for attrib in opt.attributes:
         heads.extend([attrib])
@@ -157,6 +171,15 @@ def main():
         for attrib in opt.attributes:
             heads.extend([attrib, 'aw_'+attrib])
         opt.contrib.writerow(heads)
+    
+    if opt.from_table:
+        # FIXME, assume CSV for now, should switch to OGR datasource
+        logging.info("Reading attributes from '%s'" % opt.from_table)
+        reader = csv.reader(open(opt.from_table))
+        opt.c2f = {i:n for n, i in enumerate(next(reader))}
+        opt.from_table = {}
+        for row in reader:
+            opt.from_table[row[opt.c2f[opt.from_table_id]]] = row
 
     # open geometries
     from_ds = ogr.Open(opt.from_layer)
@@ -169,6 +192,8 @@ def main():
         logging.info("Layers in same projection")
     else:
         logging.info("Re-projecting to-layer to from-layer")
+        logging.debug(from_layer.GetSpatialRef())
+        logging.debug(to_layer.GetSpatialRef())
 
     area_weight(opt, from_layer, to_layer)
 if __name__ == '__main__':
