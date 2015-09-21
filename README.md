@@ -4,7 +4,7 @@ Transfer attribute values from a layer of GIS polygon features for which
 the attribute values are known to an overlapping but different layer of
 polygon features based on area of overlap.
 
-See [areaweight.pdf] for an overview.
+See (areaweight.pdf)[areaweight.pdf] for an overview.
 
     Usage:
     
