@@ -6,7 +6,7 @@ polygon features based on area of overlap.
 
 See [areaweight.pdf](./areaweight.pdf) for an overview.
 
-    Usage:
+Usage:
     
     usage: areaweight.py [-h] --from-layer FROM_LAYER --to-layer TO_LAYER
                          --from-id FROM_ID --to-id TO_ID --attributes ATTRIBUTES
