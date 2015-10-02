@@ -28,7 +28,7 @@ def area_weight(opt, from_layer, to_layer):
     from_attr = {}
 
     for out_n, to_feature in enumerate(to_layer):
-        to_id = to_feature.GetField(opt.to_id)
+        to_id = general_id(to_feature.GetField(opt.to_id))
         to_geom = to_feature.GetGeometryRef().Clone()
         if opt.transform and opt.transform_before_buffer:
             to_geom.Transform(opt.transform)
@@ -47,7 +47,7 @@ def area_weight(opt, from_layer, to_layer):
             # SetSpatialFilter() can return non-intersecting polys (BBox hits)
             if not intersect_area:
                 continue
-            from_id = from_feature.GetField(opt.from_id)
+            from_id = general_id(from_feature.GetField(opt.from_id))
             intersecting.add(from_id)
             if opt.total_area:
                 if from_id not in from_attr:
@@ -80,6 +80,20 @@ def area_weight(opt, from_layer, to_layer):
         opt.output.writerow(out)
         if opt.progress:
             print("%d: %s %s" % (out_n+1, opt.to_id, to_id))
+def general_id(s):
+    """general_id - promote s to a string ID to maximize matchability
+
+    :param str s: id to promote
+    :return: string ID
+    :rtype: str
+    """
+
+    # to make 3 and '3' match '3.0'
+    try:
+        s = float(s)
+    except (ValueError, TypeError):
+        pass
+    return str(s)
 def make_parser():
      
      parser = argparse.ArgumentParser(
@@ -179,7 +193,7 @@ def main():
         opt.c2f = {i:n for n, i in enumerate(next(reader))}
         opt.from_table = {}
         for row in reader:
-            opt.from_table[row[opt.c2f[opt.from_table_id]]] = row
+            opt.from_table[general_id(row[opt.c2f[opt.from_table_id]])] = row
 
     # open geometries
     from_ds = ogr.Open(opt.from_layer)
